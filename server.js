@@ -2,6 +2,9 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const bcrypt = require('bcrypt');
+const multer = require('multer');
+const cors = require('cors');
+
 const saltRounds = 10;
 
 // 生成认证令牌
@@ -18,7 +21,6 @@ function authenticateToken(req, res, next) {
     return res.status(401).json({ error: '访问需要认证' });
   }
   
-  // 简单验证令牌（实际项目中应使用JWT）
   const userId = token.split('_')[1];
   const user = users.find(u => u.id === parseInt(userId));
   
@@ -31,24 +33,48 @@ function authenticateToken(req, res, next) {
 }
 
 const app = express();
-const port = 3001;
+const port = process.env.PORT || 3001;
 
 // 配置中间件
-app.use(require('cors')());
+app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static('public'));
-app.use(express.static('.'));
 
-// 确保public目录存在
-//if (!fs.existsSync('./public')) {
-//  fs.mkdirSync('./public');
-//}
-//if (!fs.existsSync('./public/images')) {
-//  fs.mkdirSync('./public/images');
-//}
+// 静态文件服务
+app.use(express.static(path.join(__dirname, 'public')));
 
-// 内存数据库
+// 前端页面路由 - 解决 Cannot GET /
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Multer 配置（适配 Vercel）
+const uploadDir = path.join('/tmp', 'public', 'images');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, uploadDir);
+  },
+  filename: function (req, file, cb) {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const upload = multer({ storage: storage });
+
+// ====================== 内存数据库 ======================
 let users = [
   { id: 1, username: '管理员', email: 'admin@yudong.com', password: 'admin123', status: 'active', registered_at: new Date().toISOString() }
 ];
@@ -157,30 +183,13 @@ function generateId(array) {
   return Math.max(...array.map(item => item.id)) + 1;
 }
 
-// 模拟文件上传
-const multer = require('multer');
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, './public/images');
-  },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
-  }
-});
+// ====================== API 路由 ======================
 
-const upload = multer({ storage: storage });
-
-// API接口
-
-// 商品相关接口
-
-// 获取所有商品
+// 商品相关
 app.get('/api/products', (req, res) => {
   res.json(products);
 });
 
-// 获取单个商品
 app.get('/api/products/:id', (req, res) => {
   const { id } = req.params;
   const product = products.find(p => p.id === parseInt(id));
@@ -191,7 +200,6 @@ app.get('/api/products/:id', (req, res) => {
   res.json(product);
 });
 
-// 添加商品
 app.post('/api/products', authenticateToken, upload.single('image'), (req, res) => {
   const { name, category, price, stock, status, description, specs } = req.body;
   const image = req.file ? `/images/${req.file.filename}` : null;
@@ -211,7 +219,6 @@ app.post('/api/products', authenticateToken, upload.single('image'), (req, res) 
   res.status(201).json(newProduct);
 });
 
-// 更新商品
 app.put('/api/products/:id', authenticateToken, upload.single('image'), (req, res) => {
   const { id } = req.params;
   const productIndex = products.findIndex(p => p.id === parseInt(id));
@@ -235,7 +242,6 @@ app.put('/api/products/:id', authenticateToken, upload.single('image'), (req, re
   res.json(products[productIndex]);
 });
 
-// 删除商品
 app.delete('/api/products/:id', authenticateToken, (req, res) => {
   const { id } = req.params;
   const productIndex = products.findIndex(p => p.id === parseInt(id));
@@ -247,7 +253,6 @@ app.delete('/api/products/:id', authenticateToken, (req, res) => {
   res.json({ message: '商品删除成功' });
 });
 
-// 切换商品状态
 app.put('/api/products/:id/status', authenticateToken, (req, res) => {
   const { id } = req.params;
   const productIndex = products.findIndex(p => p.id === parseInt(id));
@@ -259,16 +264,13 @@ app.put('/api/products/:id/status', authenticateToken, (req, res) => {
   res.json({ id: products[productIndex].id, status: products[productIndex].status });
 });
 
-// 评价相关接口
-
-// 获取商品评价
+// 评价相关
 app.get('/api/products/:id/reviews', (req, res) => {
   const { id } = req.params;
   const productReviews = reviews.filter(r => r.product_id === parseInt(id));
   res.json(productReviews);
 });
 
-// 添加商品评价
 app.post('/api/products/:id/reviews', authenticateToken, (req, res) => {
   const { id } = req.params;
   const { rating, comment } = req.body;
@@ -287,7 +289,6 @@ app.post('/api/products/:id/reviews', authenticateToken, (req, res) => {
   res.status(201).json(newReview);
 });
 
-// 删除商品评价
 app.delete('/api/reviews/:id', authenticateToken, (req, res) => {
   const { id } = req.params;
   const reviewIndex = reviews.findIndex(r => r.id === parseInt(id));
@@ -296,7 +297,6 @@ app.delete('/api/reviews/:id', authenticateToken, (req, res) => {
     return;
   }
   
-  // 检查是否是评价的作者或管理员
   if (reviews[reviewIndex].user_id !== req.user.id && req.user.email !== 'admin@yudong.com') {
     return res.status(403).json({ error: '无权删除此评价' });
   }
@@ -305,9 +305,7 @@ app.delete('/api/reviews/:id', authenticateToken, (req, res) => {
   res.json({ message: '评价删除成功' });
 });
 
-// 用户相关接口
-
-// 获取所有用户
+// 用户相关
 app.get('/api/users', (req, res) => {
   res.json(users.map(user => ({
     id: user.id,
@@ -319,18 +317,15 @@ app.get('/api/users', (req, res) => {
   })));
 });
 
-// 添加用户
 app.post('/api/users', async (req, res) => {
   try {
     const { username, email, phone, password, status } = req.body;
     
-    // 检查邮箱是否已存在
     const existingUser = users.find(u => u.email === email);
     if (existingUser) {
       return res.status(400).json({ error: '邮箱已被注册' });
     }
     
-    // 加密密码
     const hashedPassword = await bcrypt.hash(password, saltRounds);
     
     const newUser = {
@@ -350,27 +345,22 @@ app.post('/api/users', async (req, res) => {
   }
 });
 
-// 用户登录
 app.post('/api/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     
-    // 查找用户
     const user = users.find(u => u.email === email);
     if (!user) {
       return res.status(401).json({ error: '邮箱或密码错误' });
     }
     
-    // 验证密码
     const match = await bcrypt.compare(password, user.password);
     if (!match) {
       return res.status(401).json({ error: '邮箱或密码错误' });
     }
     
-    // 生成认证令牌
     const token = generateToken(user.id);
     
-    // 登录成功，返回用户信息和令牌
     res.json({
       id: user.id,
       username: user.username,
@@ -386,7 +376,6 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// 更新用户
 app.put('/api/users/:id', authenticateToken, (req, res) => {
   const { id } = req.params;
   const userIndex = users.findIndex(u => u.id === parseInt(id));
@@ -405,7 +394,6 @@ app.put('/api/users/:id', authenticateToken, (req, res) => {
   res.json({ id: users[userIndex].id, username: users[userIndex].username, email: users[userIndex].email, phone: users[userIndex].phone, status: users[userIndex].status });
 });
 
-// 删除用户
 app.delete('/api/users/:id', authenticateToken, (req, res) => {
   const { id } = req.params;
   const userIndex = users.findIndex(u => u.id === parseInt(id));
@@ -417,14 +405,11 @@ app.delete('/api/users/:id', authenticateToken, (req, res) => {
   res.json({ message: '用户删除成功' });
 });
 
-// 订单相关接口
-
-// 获取所有订单
+// 订单相关
 app.get('/api/orders', (req, res) => {
   res.json(orders);
 });
 
-// 获取订单详情
 app.get('/api/orders/:id', (req, res) => {
   const { id } = req.params;
   const order = orders.find(o => o.id === parseInt(id));
@@ -436,7 +421,6 @@ app.get('/api/orders/:id', (req, res) => {
   res.json({ ...order, items });
 });
 
-// 添加订单
 app.post('/api/orders', (req, res) => {
   const { user_id, user_name, total_amount, shipping_address, payment_method, items } = req.body;
   const newOrder = {
@@ -451,7 +435,6 @@ app.post('/api/orders', (req, res) => {
   };
   orders.push(newOrder);
   
-  // 添加订单商品
   items.forEach(item => {
     const newOrderItem = {
       id: generateId(orderItems),
@@ -467,7 +450,6 @@ app.post('/api/orders', (req, res) => {
   res.status(201).json({ ...newOrder, items });
 });
 
-// 更新订单状态
 app.put('/api/orders/:id/status', (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
@@ -480,25 +462,20 @@ app.put('/api/orders/:id/status', (req, res) => {
   res.json({ id: orders[orderIndex].id, status: orders[orderIndex].status });
 });
 
-// 模拟支付接口
 app.post('/api/payments', (req, res) => {
   try {
     const { order_id, payment_method, amount } = req.body;
     
-    // 查找订单
     const order = orders.find(o => o.id === parseInt(order_id));
     if (!order) {
       return res.status(404).json({ error: '订单不存在' });
     }
     
-    // 模拟支付处理
     setTimeout(() => {
-      // 支付成功
       order.status = 'paid';
       
-      // 生成支付凭证
       const payment = {
-        id: generateId([]), // 简单生成ID
+        id: generateId([]),
         order_id: order.id,
         payment_method,
         amount,
@@ -512,7 +489,7 @@ app.post('/api/payments', (req, res) => {
         payment,
         message: '支付成功'
       });
-    }, 1500); // 模拟支付延迟
+    }, 1500);
     
   } catch (error) {
     console.error('支付失败:', error);
@@ -520,7 +497,5 @@ app.post('/api/payments', (req, res) => {
   }
 });
 
-// 启动服务器
-app.listen(port, () => {
-  console.log(`服务器运行在 http://localhost:${port}`);
-});
+// Vercel 必须导出
+module.exports = app;
