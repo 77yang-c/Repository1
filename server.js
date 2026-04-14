@@ -41,12 +41,12 @@ app.use(express.static('public'));
 app.use(express.static('.'));
 
 // 确保public目录存在
-if (!fs.existsSync('./public')) {
-  fs.mkdirSync('./public');
-}
-if (!fs.existsSync('./public/images')) {
-  fs.mkdirSync('./public/images');
-}
+//if (!fs.existsSync('./public')) {
+//  fs.mkdirSync('./public');
+//}
+//if (!fs.existsSync('./public/images')) {
+//  fs.mkdirSync('./public/images');
+//}
 
 // 内存数据库
 let users = [
