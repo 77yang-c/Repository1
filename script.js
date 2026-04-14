@@ -88,8 +88,21 @@ function initEventListeners() {
 // 加载商品数据
 async function loadProducts() {
     try {
+        // 检查缓存
+        const cachedProducts = localStorage.getItem('cachedProducts');
+        if (cachedProducts) {
+            const products = JSON.parse(cachedProducts);
+            renderProducts(products);
+            return;
+        }
+        
         const response = await fetch('http://localhost:3001/api/products');
         const products = await response.json();
+        
+        // 缓存数据，有效期10分钟
+        localStorage.setItem('cachedProducts', JSON.stringify(products));
+        localStorage.setItem('cachedProductsTime', Date.now().toString());
+        
         renderProducts(products);
     } catch (error) {
         console.error('加载商品失败:', error);
@@ -99,8 +112,20 @@ async function loadProducts() {
 // 加载推荐商品
 async function loadRecommendedProducts() {
     try {
-        const response = await fetch('http://localhost:3001/api/products');
-        const products = await response.json();
+        // 检查缓存
+        const cachedProducts = localStorage.getItem('cachedProducts');
+        let products;
+        
+        if (cachedProducts) {
+            products = JSON.parse(cachedProducts);
+        } else {
+            const response = await fetch('http://localhost:3001/api/products');
+            products = await response.json();
+            // 缓存数据，有效期10分钟
+            localStorage.setItem('cachedProducts', JSON.stringify(products));
+            localStorage.setItem('cachedProductsTime', Date.now().toString());
+        }
+        
         // 随机选择3个商品作为推荐
         const recommended = products.sort(() => 0.5 - Math.random()).slice(0, 3);
         renderRecommendedProducts(recommended);
@@ -154,7 +179,8 @@ function createProductCard(product) {
                 <button class="btn btn-outline" onclick="openProductModal(${product.id})"><i class="fas fa-eye"><i> 查看详情<button>
                 <button class="btn btn-primary" onclick="addToCart(${product.id}, 1)"><i class="fas fa-shopping-cart"><i> 加入购物车<button>
             <div>
-        <
+        <div>
+    `;
     
     return card;
 }
@@ -188,8 +214,119 @@ async function openProductModal(productId) {
         
         // 加载相关推荐
         loadRelatedProducts(product.category);
+        
+        // 加载商品评价
+        loadProductReviews(productId);
     } catch (error) {
         console.error('加载商品详情失败:', error);
+    }
+}
+
+// 加载商品评价
+async function loadProductReviews(productId) {
+    try {
+        const response = await fetch(`http://localhost:3001/api/products/${productId}/reviews`);
+        const reviews = await response.json();
+        
+        const reviewsContainer = document.getElementById('productReviews');
+        reviewsContainer.innerHTML = '';
+        
+        if (reviews.length === 0) {
+            reviewsContainer.innerHTML = '<div style="text-align: center; padding: 40px 0; color: #999;">暂无评价</div>';
+            document.getElementById('modalProductReviews').textContent = '0';
+            document.getElementById('modalProductRating').innerHTML = '';
+            return;
+        }
+        
+        // 计算平均评分
+        const averageRating = reviews.reduce((sum, review) => sum + review.rating, 0) / reviews.length;
+        const roundedRating = Math.round(averageRating);
+        
+        // 显示评分
+        let ratingHtml = '';
+        for (let i = 1; i <= 5; i++) {
+            ratingHtml += i <= roundedRating ? '<i class="fas fa-star"></i>' : '<i class="far fa-star"></i>';
+        }
+        document.getElementById('modalProductRating').innerHTML = ratingHtml;
+        document.getElementById('modalProductReviews').textContent = reviews.length;
+        
+        // 显示评价列表
+        reviews.forEach(review => {
+            const reviewItem = document.createElement('div');
+            reviewItem.style.padding = '15px';
+            reviewItem.style.borderBottom = '1px solid #eee';
+            
+            // 生成评分星星
+            let reviewRatingHtml = '';
+            for (let i = 1; i <= 5; i++) {
+                reviewRatingHtml += i <= review.rating ? '<i class="fas fa-star" style="color: #f39c12;"></i>' : '<i class="far fa-star" style="color: #f39c12;"></i>';
+            }
+            
+            reviewItem.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <span style="font-weight: 500;">${review.username}</span>
+                    <div style="color: #f39c12;">${reviewRatingHtml}</div>
+                </div>
+                <p style="margin-bottom: 10px; color: #666;">${review.comment}</p>
+                <div style="font-size: 0.8rem; color: #999;">${new Date(review.created_at).toLocaleString()}</div>
+            `;
+            
+            reviewsContainer.appendChild(reviewItem);
+        });
+    } catch (error) {
+        console.error('加载评价失败:', error);
+    }
+}
+
+// 提交评价
+async function submitReview() {
+    const user = JSON.parse(localStorage.getItem('user'));
+    if (!user) {
+        alert('请先登录');
+        return;
+    }
+    
+    const rating = document.querySelector('input[name="rating"]:checked');
+    const comment = document.getElementById('reviewComment').value;
+    
+    if (!rating) {
+        alert('请选择评分');
+        return;
+    }
+    
+    if (!comment) {
+        alert('请输入评价内容');
+        return;
+    }
+    
+    try {
+        const token = localStorage.getItem('token');
+        const response = await fetch(`http://localhost:3001/api/products/${currentProduct.id}/reviews`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({
+                rating: rating.value,
+                comment: comment
+            })
+        });
+        
+        if (response.ok) {
+            alert('评价提交成功');
+            // 重置表单
+            document.querySelectorAll('input[name="rating"]').forEach(radio => radio.checked = false);
+            document.getElementById('reviewComment').value = '';
+            // 重新加载评价
+            loadProductReviews(currentProduct.id);
+        } else {
+            const error = await response.json();
+            alert(error.error || '评价提交失败');
+        }
+    } catch (error) {
+        console.error('提交评价失败:', error);
+        alert('评价提交失败，请重试');
     }
 }
 
@@ -572,8 +709,9 @@ async function login() {
         
         if (response.ok) {
             const user = await response.json();
-            // 保存用户信息到本地存储
+            // 保存用户信息和令牌到本地存储
             localStorage.setItem('user', JSON.stringify(user));
+            localStorage.setItem('token', user.token);
             
             // 更新UI
             updateUserUI();
@@ -678,6 +816,7 @@ function updateUserUI() {
 // 退出登录
 function logout() {
     localStorage.removeItem('user');
+    localStorage.removeItem('token');
     document.getElementById('authButtons').style.display = 'flex';
     document.getElementById('userInfo').style.display = 'none';
     alert('已退出登录');
@@ -812,3 +951,82 @@ if (document.readyState === 'loading') {
 } else {
     initPage();
 }
+
+// 图片懒加载
+function initLazyLoad() {
+    const lazyImages = document.querySelectorAll('.lazy');
+    
+    const imageObserver = new IntersectionObserver((entries, observer) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                const image = entry.target;
+                image.src = image.dataset.src;
+                image.classList.remove('lazy');
+                observer.unobserve(image);
+            }
+        });
+    });
+    
+    lazyImages.forEach(image => {
+        imageObserver.observe(image);
+    });
+}
+
+// 初始化评分星星交互
+function initRatingStars() {
+    const ratingInputs = document.querySelectorAll('.rating-input input');
+    const ratingLabels = document.querySelectorAll('.rating-input label');
+    
+    ratingLabels.forEach((label, index) => {
+        label.addEventListener('mouseenter', function() {
+            // 高亮当前及之前的星星
+            for (let i = 0; i <= index; i++) {
+                ratingLabels[i].style.color = '#f39c12';
+            }
+        });
+        
+        label.addEventListener('mouseleave', function() {
+            // 重置星星颜色
+            ratingLabels.forEach((l, i) => {
+                const radio = ratingInputs[i];
+                l.style.color = radio.checked ? '#f39c12' : '#ddd';
+            });
+        });
+        
+        label.addEventListener('click', function() {
+            // 保持选中状态
+            ratingLabels.forEach((l, i) => {
+                l.style.color = i <= index ? '#f39c12' : '#ddd';
+            });
+        });
+    });
+}
+
+// 回到顶部功能
+function initBackToTop() {
+    const backToTopBtn = document.getElementById('backToTop');
+    
+    // 滚动检测
+    window.addEventListener('scroll', function() {
+        if (window.pageYOffset > 300) {
+            backToTopBtn.style.display = 'flex';
+        } else {
+            backToTopBtn.style.display = 'none';
+        }
+    });
+    
+    // 点击事件
+    backToTopBtn.addEventListener('click', function() {
+        window.scrollTo({
+            top: 0,
+            behavior: 'smooth'
+        });
+    });
+}
+
+// 在页面加载完成后初始化
+window.addEventListener('DOMContentLoaded', function() {
+    initLazyLoad();
+    initRatingStars();
+    initBackToTop();
+});

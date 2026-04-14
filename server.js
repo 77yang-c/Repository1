@@ -4,6 +4,32 @@ const fs = require('fs');
 const bcrypt = require('bcrypt');
 const saltRounds = 10;
 
+// 生成认证令牌
+function generateToken(userId) {
+  return 'token_' + userId + '_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+}
+
+// 认证中间件
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  
+  if (!token) {
+    return res.status(401).json({ error: '访问需要认证' });
+  }
+  
+  // 简单验证令牌（实际项目中应使用JWT）
+  const userId = token.split('_')[1];
+  const user = users.find(u => u.id === parseInt(userId));
+  
+  if (!user) {
+    return res.status(403).json({ error: '无效的认证令牌' });
+  }
+  
+  req.user = user;
+  next();
+}
+
 const app = express();
 const port = 3001;
 
@@ -26,6 +52,8 @@ if (!fs.existsSync('./public/images')) {
 let users = [
   { id: 1, username: '管理员', email: 'admin@yudong.com', password: 'admin123', status: 'active', registered_at: new Date().toISOString() }
 ];
+
+let reviews = [];
 
 let products = [
   {
@@ -164,7 +192,7 @@ app.get('/api/products/:id', (req, res) => {
 });
 
 // 添加商品
-app.post('/api/products', upload.single('image'), (req, res) => {
+app.post('/api/products', authenticateToken, upload.single('image'), (req, res) => {
   const { name, category, price, stock, status, description, specs } = req.body;
   const image = req.file ? `/images/${req.file.filename}` : null;
   const newProduct = {
@@ -184,7 +212,7 @@ app.post('/api/products', upload.single('image'), (req, res) => {
 });
 
 // 更新商品
-app.put('/api/products/:id', upload.single('image'), (req, res) => {
+app.put('/api/products/:id', authenticateToken, upload.single('image'), (req, res) => {
   const { id } = req.params;
   const productIndex = products.findIndex(p => p.id === parseInt(id));
   if (productIndex === -1) {
@@ -208,7 +236,7 @@ app.put('/api/products/:id', upload.single('image'), (req, res) => {
 });
 
 // 删除商品
-app.delete('/api/products/:id', (req, res) => {
+app.delete('/api/products/:id', authenticateToken, (req, res) => {
   const { id } = req.params;
   const productIndex = products.findIndex(p => p.id === parseInt(id));
   if (productIndex === -1) {
@@ -220,7 +248,7 @@ app.delete('/api/products/:id', (req, res) => {
 });
 
 // 切换商品状态
-app.put('/api/products/:id/status', (req, res) => {
+app.put('/api/products/:id/status', authenticateToken, (req, res) => {
   const { id } = req.params;
   const productIndex = products.findIndex(p => p.id === parseInt(id));
   if (productIndex === -1) {
@@ -229,6 +257,52 @@ app.put('/api/products/:id/status', (req, res) => {
   }
   products[productIndex].status = products[productIndex].status === 'in-stock' ? 'out-of-stock' : 'in-stock';
   res.json({ id: products[productIndex].id, status: products[productIndex].status });
+});
+
+// 评价相关接口
+
+// 获取商品评价
+app.get('/api/products/:id/reviews', (req, res) => {
+  const { id } = req.params;
+  const productReviews = reviews.filter(r => r.product_id === parseInt(id));
+  res.json(productReviews);
+});
+
+// 添加商品评价
+app.post('/api/products/:id/reviews', authenticateToken, (req, res) => {
+  const { id } = req.params;
+  const { rating, comment } = req.body;
+  
+  const newReview = {
+    id: generateId(reviews),
+    product_id: parseInt(id),
+    user_id: req.user.id,
+    username: req.user.username,
+    rating: parseInt(rating),
+    comment,
+    created_at: new Date().toISOString()
+  };
+  
+  reviews.push(newReview);
+  res.status(201).json(newReview);
+});
+
+// 删除商品评价
+app.delete('/api/reviews/:id', authenticateToken, (req, res) => {
+  const { id } = req.params;
+  const reviewIndex = reviews.findIndex(r => r.id === parseInt(id));
+  if (reviewIndex === -1) {
+    res.status(404).json({ error: '评价不存在' });
+    return;
+  }
+  
+  // 检查是否是评价的作者或管理员
+  if (reviews[reviewIndex].user_id !== req.user.id && req.user.email !== 'admin@yudong.com') {
+    return res.status(403).json({ error: '无权删除此评价' });
+  }
+  
+  reviews.splice(reviewIndex, 1);
+  res.json({ message: '评价删除成功' });
 });
 
 // 用户相关接口
@@ -293,14 +367,18 @@ app.post('/api/login', async (req, res) => {
       return res.status(401).json({ error: '邮箱或密码错误' });
     }
     
-    // 登录成功，返回用户信息（不包含密码）
+    // 生成认证令牌
+    const token = generateToken(user.id);
+    
+    // 登录成功，返回用户信息和令牌
     res.json({
       id: user.id,
       username: user.username,
       email: user.email,
       phone: user.phone,
       status: user.status,
-      registered_at: user.registered_at
+      registered_at: user.registered_at,
+      token: token
     });
   } catch (error) {
     console.error('登录失败:', error);
@@ -309,7 +387,7 @@ app.post('/api/login', async (req, res) => {
 });
 
 // 更新用户
-app.put('/api/users/:id', (req, res) => {
+app.put('/api/users/:id', authenticateToken, (req, res) => {
   const { id } = req.params;
   const userIndex = users.findIndex(u => u.id === parseInt(id));
   if (userIndex === -1) {
@@ -328,7 +406,7 @@ app.put('/api/users/:id', (req, res) => {
 });
 
 // 删除用户
-app.delete('/api/users/:id', (req, res) => {
+app.delete('/api/users/:id', authenticateToken, (req, res) => {
   const { id } = req.params;
   const userIndex = users.findIndex(u => u.id === parseInt(id));
   if (userIndex === -1) {
